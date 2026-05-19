@@ -1,0 +1,5 @@
+openai==2.36.0
+sentence-transformers==3.0.1
+python-dotenv==1.2.2
+pydub==0.25.1
+omnilingual-asr
