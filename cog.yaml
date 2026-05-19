@@ -9,6 +9,7 @@ build:
   system_packages:
     - libsndfile1
     - ffmpeg
+    - libtbb-dev
   python_requirements: requirements.txt
 
 predict: "predict.py:Predictor"
