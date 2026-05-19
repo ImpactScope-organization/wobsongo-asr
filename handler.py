@@ -30,7 +30,7 @@ from omnilingual_asr.models.inference.pipeline import ASRInferencePipeline
 
 CHUNK_DURATION_MS = 30 * 1000
 OVERLAP_MS = 1_500
-DEFAULT_MODEL = "omniASR_LLM_3B_v2"
+DEFAULT_MODEL = "omniASR_LLM_3B"
 
 LLM_MODELS = {
     "omniASR_LLM_300M",
