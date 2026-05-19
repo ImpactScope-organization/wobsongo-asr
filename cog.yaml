@@ -1,0 +1,15 @@
+# Configuration for Cog ⚙️
+# Reference: https://github.com/replicate/cog/blob/main/docs/yaml.md
+
+image: "r8.im/impactscope/omnilingual-asr"
+build:
+  gpu: true
+  cuda: "12.8"
+  python_version: "3.12"
+  system_packages:
+    - libsndfile1
+    - ffmpeg
+    - libtbb-dev
+  python_requirements: requirements.txt
+
+predict: "predict.py:Predictor"
