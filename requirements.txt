@@ -1,5 +1,8 @@
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch
+torchaudio
 openai==2.36.0
 sentence-transformers==3.0.1
 python-dotenv==1.2.2
 pydub==0.25.1
-omnilingual-asr
+omnilingual-asr==0.1.0

@@ -4,7 +4,7 @@
 image: "r8.im/impactscope/omnilingual-asr"
 build:
   gpu: true
-  # cuda: "12.8"
+  cuda: "12.4"
   python_version: "3.12"
   system_packages:
     - libsndfile1
