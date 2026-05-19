@@ -36,12 +36,12 @@ LLM_MODELS = {
     "omniASR_LLM_300M",
     "omniASR_LLM_1B",
     "omniASR_LLM_3B",
-    "omniASR_LLM_300M_v2",
-    "omniASR_LLM_1B_v2",
-    "omniASR_LLM_3B_v2",
-    "omniASR_LLM_Unlimited_300M_v2",
-    "omniASR_LLM_Unlimited_1B_v2",
-    "omniASR_LLM_Unlimited_3B_v2",
+    # "omniASR_LLM_300M_v2",
+    # "omniASR_LLM_1B_v2",
+    # "omniASR_LLM_3B_v2",
+    # "omniASR_LLM_Unlimited_300M_v2",
+    # "omniASR_LLM_Unlimited_1B_v2",
+    # "omniASR_LLM_Unlimited_3B_v2",
 }
 
 UNLIMITED_MODELS = {m for m in LLM_MODELS if "Unlimited" in m}
