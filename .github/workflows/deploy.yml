@@ -18,6 +18,7 @@ jobs:
         uses: replicate/setup-cog@v2
         with:
           token: ${{ secrets.REPLICATE_API_TOKEN }}
+          cog-version: "0.19.3"
 
       - name: Push to Replicate
         run: cog push r8.im/impactscope/omnilingual-asr
