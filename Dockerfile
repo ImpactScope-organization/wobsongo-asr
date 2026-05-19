@@ -4,6 +4,7 @@ FROM runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404
 # The base image ships Python 3.13; omnilingual-asr==0.2.0 requires <=3.12.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common \
+    curl \
  && add-apt-repository ppa:deadsnakes/ppa \
  && apt-get update && apt-get install -y --no-install-recommends \
     python3.12 \
@@ -15,8 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 
 # Bootstrap pip for Python 3.12 and make python3.12 the default interpreter
-RUN python3.12 -m ensurepip --upgrade \
- && python3.12 -m pip install --upgrade pip \
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12 \
  && update-alternatives --install /usr/local/bin/python python /usr/bin/python3.12 10 \
  && update-alternatives --install /usr/local/bin/python3 python3 /usr/bin/python3.12 10
 
