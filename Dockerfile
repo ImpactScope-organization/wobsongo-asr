@@ -18,7 +18,7 @@ RUN pip install --no-cache-dir runpod \
  && pip install --no-cache-dir \
       --extra-index-url https://download.pytorch.org/whl/cu128 \
       pydub==0.25.1 \
-      omnilingual-asr==0.1.0
+      omnilingual-asr==0.2.0
 
 # Pre-download the default model weights into the image so cold starts are fast.
 # ASRInferencePipeline downloads from HuggingFace Hub on first init.
