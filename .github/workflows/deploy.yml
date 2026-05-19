@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-  paths:
+    paths:
       - 'handler.py'
       - 'Dockerfile'
   workflow_dispatch:
