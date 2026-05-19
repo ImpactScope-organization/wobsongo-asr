@@ -1,0 +1,63 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+.env/
+.venv/
+
+# Environment variables
+.env
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# VSCode
+.vscode/
+
+# macOS
+.DS_Store
+
+# Excel output files
+*.xlsx
+*.xls
+*.csv
+
+# Audio temporary chunks
+temp_chunks/
+
+# Audio / video generated files
+*.wav
+*.mp3
+*.mp4
+
+# Logs
+*.log
+
+# PyTorch / HuggingFace cache
+.cache/
+huggingface/
+hf_cache/
+
+# Model cache
+models/
+checkpoints/
+
+# Build files
+dist/
+build/
+
+# Pytest
+.pytest_cache/
+
+# Replicate / Cog
+cog-build/
+
+# Temporary files
+tmp/
+temp/
+
+# Python packaging
+*.egg-info/
