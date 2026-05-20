@@ -7,12 +7,12 @@ RUN pip install pydub omnilingual-asr runpod
 #   sha1(url).hexdigest()[:24] / filename
 # (see fairseq2 StandardAssetDownloadManager._get_uri_hash)
 RUN mkdir -p \
-      /root/.cache/fairseq2/assets/8e3cc13350b150509589afd0 \
-      /root/.cache/fairseq2/assets/e7be1a6acb8f76fdbca19dce \
- && wget -q -O /root/.cache/fairseq2/assets/8e3cc13350b150509589afd0/omniASR-LLM-3B-v2.pt \
-      https://dl.fbaipublicfiles.com/mms/omniASR-LLM-3B-v2.pt \
- && wget -q -O /root/.cache/fairseq2/assets/e7be1a6acb8f76fdbca19dce/omniASR_tokenizer_written_v2.model \
-      https://dl.fbaipublicfiles.com/mms/omniASR_tokenizer_written_v2.model
+      /root/.cache/fairseq2/assets/01fd052e87486e6e4d742fdf \
+      /root/.cache/fairseq2/assets/b86047ffa9089216c2972a21 \
+ && wget -q -O /root/.cache/fairseq2/assets/01fd052e87486e6e4d742fdf/omniASR-LLM-3B.pt \
+      https://dl.fbaipublicfiles.com/mms/omniASR-LLM-3B.pt \
+ && wget -q -O /root/.cache/fairseq2/assets/b86047ffa9089216c2972a21/omniASR_tokenizer.model \
+      https://dl.fbaipublicfiles.com/mms/omniASR_tokenizer.model
 
 COPY handler.py .
 CMD ["python", "-u", "handler.py"]
