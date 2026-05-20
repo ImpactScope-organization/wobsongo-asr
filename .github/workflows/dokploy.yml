@@ -7,6 +7,7 @@ on:
     paths:
       - "app.py"
       - "streamlit.Dockerfile"
+      - ".github/workflows/dokploy.yml"
 
 jobs:
   build-and-push:
