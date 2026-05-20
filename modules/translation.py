@@ -19,19 +19,28 @@ class LLMTranslator:
             raise ValueError("OPENAI_API_KEY environment variable is not set.")
         self.client = OpenAI(api_key=api_key)
 
+        self.language_map = {
+            "mos_Latn": "Mooré",
+            "dyu_Latn": "Dioula",
+            "fra_Latn": "French",
+            "eng_Latn": "English"
+        }
+
     def translate_text(self, text: str, source_lang: str, target_lang: str) -> TranslationOutput:
         """
         Translate text from the source language to the target language using OpenAI Tool Calling.
         """
         if not text or not str(text).strip(): 
             return TranslationOutput(original_text=text, translated_text="")
+        
+        human_source_lang = self.language_map.get(source_lang, source_lang)
 
         tools = [
             {
                 "type": "function",
                 "function": {
                     "name": "provide_translation",
-                    "description": f"Translate the raw {source_lang} transcript to {target_lang}.",
+                    "description": f"Translate the raw {human_source_lang} transcript to {target_lang}.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -54,12 +63,14 @@ class LLMTranslator:
                 response = self.client.chat.completions.create(
                     model="gpt-4o-mini", 
                     messages=[
-                        {"role": "system", "content": f"You are a professional translator. Translate the following {source_lang} text into {target_lang}. Maintain the original meaning accurately."},
+                        {"role": "system", "content": f"You are an expert linguist specializing in West African languages. Translate the following {human_source_lang} text into {target_lang} accurately using the provided tool. Maintain the original meaning accurately."},
                         {"role": "user", "content": text}
                     ],
                     tools=tools,
                     tool_choice={"type": "function", "function": {"name": "provide_translation"}},
-                    temperature=0.2 
+                    temperature=0.3,
+                    frequency_penalty=1.5,
+                    max_tokens=4096
                 )
                 
                 message = response.choices[0].message
@@ -74,11 +85,12 @@ class LLMTranslator:
                 
             except Exception as e:
                 error_msg = str(e).lower()
-                print(f"[Attempt {attempt}] Error from OpenAI API: {e}")
+                print(f"[Attempt {attempt}] Error from OpenAI API / Parsing: {e}")
                 
-                if "rate_limit" in error_msg or "timeout" in error_msg or "502" in error_msg:
-                    time.sleep(5)
+                if any(err in error_msg for err in ["rate_limit", "timeout", "502", "unterminated string", "json", "expecting"]):
+                    print("Retrying in 3 seconds...")
+                    time.sleep(3)
                 else:
-                    break 
+                    time.sleep(2)
 
         return TranslationOutput(original_text=text, translated_text="")
