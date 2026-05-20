@@ -98,7 +98,7 @@ def remove_duplicate_tail(prev: str, curr: str) -> str:
         if pw[-i:] == cw[:i]:
             return " ".join(cw[i:])
     return curr
-
+-
 
 def split_audio(file_path: str) -> list[str]:
     tmp_dir = tempfile.mkdtemp(prefix="asr_chunks_")
