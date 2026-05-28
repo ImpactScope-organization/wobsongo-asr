@@ -2,7 +2,7 @@ import streamlit as st
 import tempfile
 import os
 from pathlib import Path
-from modules.runpod_transcriber import RunPodTranscriber 
+from modules.modal_transcriber import ModalTranscriber
 from modules.transcriber import ModelType, TargetLanguage
 from modules.translation import LLMTranslator
 from modules.extractor import LLMExtractor
@@ -12,7 +12,7 @@ from modules.comparator import LLMComparator
 @st.cache_resource
 def load_modules():
     return {
-        "transcriber": RunPodTranscriber(),
+        "transcriber": ModalTranscriber(),
         "translator": LLMTranslator(),
         "extractor": LLMExtractor(),
         "comparator": LLMComparator()
