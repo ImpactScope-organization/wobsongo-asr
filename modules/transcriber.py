@@ -22,9 +22,10 @@ class TranscriptionOutput:
 class TranscriberProtocol(Protocol):
     def transcribe(
         self, 
-        audio: Path,
         model: ModelType,
         target_lang: TargetLanguage,
+        audio: Path | None = None,
+        audio_url: str | None = None,
         human_transcription: str | None = None,
     ) -> TranscriptionOutput | dict[str, str]:
         ...

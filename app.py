@@ -32,11 +32,19 @@ with st.container():
     
     with col1:
         uploaded_audio = st.file_uploader("Upload File Audio")
+        st.markdown("**OR**")
+        input_audio_url = st.text_input("Use Audio URLs:")
         
     with col2:
         target_language_choice = st.selectbox(
             "Target Translation:", 
             options=["English", "French"]
+        )
+
+        source_language_choice = st.selectbox(
+            "Source Language (Audio):",
+            options=["auto", "french", "english", "moore", "dioula"],
+            help="Select a specific language for the audio to be transcribed."
         )
         
     with col3:
@@ -48,8 +56,8 @@ with st.container():
 
 # Execution button
 if st.button("Start the Analysis Process", type="primary", use_container_width=True):
-    if not uploaded_audio:
-        st.warning("Please upload the audio file first!")
+    if not uploaded_audio and not input_audio_url:
+        st.warning("Please upload the audio file OR provide an audio URL first!")
     else:
         # Specify the target language for ASR based on the dropdown selection.
         if target_language_choice == "English":
@@ -57,25 +65,25 @@ if st.button("Start the Analysis Process", type="primary", use_container_width=T
         else:
             asr_target_lang = TargetLanguage.FRENCH
 
-        # Save the uploaded file to a temporary physical file
-        # Extract the original file extension
-        file_extension = Path(uploaded_audio.name).suffix 
-        
-        # Create temporary files on the system
-        with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as tmp_file:
-            tmp_file.write(uploaded_audio.getvalue())
-            audio_path = Path(tmp_file.name)
-
         try:
             st.divider()
+
+            audio_path = None
+            if uploaded_audio:
+                file_extension = Path(uploaded_audio.name).suffix 
+                with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as tmp_file:
+                    tmp_file.write(uploaded_audio.getvalue())
+                    audio_path = Path(tmp_file.name)
             
-            # Transcription (OmniASR via RunPod)
+            # Transcription (OmniASR via Modal)
             st.subheader("ASR Transcription")
-            with st.spinner("The ASR engine is working to extract audio via RunPod..."):
+            with st.spinner("The ASR engine is working..."):
                 asr_result = modules["transcriber"].transcribe(
-                    audio=audio_path,
                     model=ModelType.OMNILINGUAL,
-                    target_lang=asr_target_lang
+                    target_lang=asr_target_lang,
+                    source_lang=source_language_choice,
+                    audio=audio_path,
+                    audio_url=input_audio_url.strip() if input_audio_url else None
                 )
                 st.success(f"Transcription Completed! Language detected: **{asr_result.language_selected}**")
                 
@@ -190,5 +198,5 @@ if st.button("Start the Analysis Process", type="primary", use_container_width=T
                     )
         
         finally:
-            if audio_path.exists():
+            if audio_path and audio_path.exists():
                 os.remove(audio_path)

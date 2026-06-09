@@ -14,7 +14,7 @@ TEMP_CHUNK_DIR = "temp_chunks"
 os.makedirs(TEMP_CHUNK_DIR, exist_ok=True)
 
 def split_audio(file_path):
-    start_time = time.time()
+    start_time = time.perf_counter()
 
     audio = AudioSegment.from_file(file_path)
     audio = audio.set_frame_rate(16000).set_channels(1)
@@ -38,7 +38,7 @@ def split_audio(file_path):
         start += (CHUNK_DURATION - OVERLAP)
         i += 1
 
-    end_time = time.time()
+    end_time = time.perf_counter()
     split_time = end_time - start_time
 
     print(f"   Total chunks created: {len(chunks)}")

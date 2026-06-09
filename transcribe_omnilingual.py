@@ -25,7 +25,7 @@ def score_text(text):
 
 
 def split_audio(file_path):
-    start_time = time.time()
+    start_time = time.perf_counter()
 
     audio = AudioSegment.from_file(file_path)
     audio = audio.set_frame_rate(16000).set_channels(1)
@@ -49,7 +49,7 @@ def split_audio(file_path):
         start += (CHUNK_DURATION - OVERLAP)
         i += 1
 
-    end_time = time.time()
+    end_time = time.perf_counter()
     split_time = end_time - start_time
 
     print(f"   Total chunks created: {len(chunks)}")
@@ -104,14 +104,14 @@ def transcribe_with_chunking(pipeline, file_path):
 
         for lang in CANDIDATE_LANGS:
             try:
-                start_infer = time.time()
+                start_infer = time.perf_counter()
 
                 result = pipeline.transcribe(
                     [chunk],
                     lang=[lang]
                 )
 
-                end_infer = time.time()
+                end_infer = time.perf_counter()
                 infer_time = end_infer - start_infer
                 total_infer_time += infer_time
 

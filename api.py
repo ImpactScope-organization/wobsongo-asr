@@ -6,8 +6,11 @@ import urllib.request
 import modal
 from typing import Dict, Any
 import time
+from modules.audio_utils import split_audio, get_audio_duration_ms
 
-image = modal.Image.from_dockerfile("modal.Dockerfile")
+image = (modal.Image.from_dockerfile("modal.Dockerfile")
+         .add_local_python_source("modules")
+)
 
 app = modal.App("wobsongo-asr")
 volume_model = modal.Volume.from_name("wobsongo-model-asr", create_if_missing=False)
@@ -63,25 +66,27 @@ class ASREndpoint:
     @modal.enter()
     def load_model(self):
         print("\nStart profiling cold start")
-        start_total = time.time()
+        start_total = time.perf_counter()
 
-        t0 = time.time()
+        t0 = time.perf_counter()
         os.environ["FAIRSEQ2_CACHE_DIR"] ="/root/.cache/fairseq2"
         os.environ["XDG_CACHE_HOME"] = "/root/.cache"
 
-        t1 = time.time()
+        t1 = time.perf_counter()
         print(f"[PROFILING] Environment setup: {t1 - t0:.2f} seconds")
 
         print(f"Loading model {DEFAULT_MODEL} into VRAM...")
 
         print("[PROFILING] Import library ASRInferencePipeline...")
         from omnilingual_asr.models.inference.pipeline import ASRInferencePipeline
-        t2 = time.time()
+
+        
+        t2 = time.perf_counter()
         print(f"[PROFILING] Import library done: {t2 - t1:.2f} seconds")
 
         print(f"[PROFILING] Load model {DEFAULT_MODEL} from volume to VRAM GPU...")
         self.pipeline = ASRInferencePipeline(model_card=DEFAULT_MODEL, device="cuda")
-        t3 = time.time()
+        t3 = time.perf_counter()
         print(f"[PROFILING] Finish loading to GPU {t3 - t2:.2f} seconds")
 
         print(f"[PROFILING] Total cold start time (load_model): {t3 - start_total:.2f} seconds")
@@ -89,42 +94,10 @@ class ASREndpoint:
 
         print("Model ready!")
 
-    def split_audio(self, file_path: str) -> list[str]:
-        from pydub import AudioSegment
-        tmp_dir = tempfile.mkdtemp(prefix="asr_chunks_")
-        audio = AudioSegment.from_file(file_path)
-        audio = audio.set_frame_rate(16000).set_channels(1)
-
-        chunks, start, i = [], 0, 0
-        base = os.path.basename(file_path)
-        while start < len(audio):
-            chunk = audio[start : start + CHUNK_DURATION_MS]
-            path = os.path.join(tmp_dir, f"{base}_{i}.wav")
-            chunk.export(path, format="wav")
-            chunks.append(path)
-            start += CHUNK_DURATION_MS - OVERLAP_MS
-            i += 1
-        return chunks
-
-    def transcribe_chunk(self, chunk_path: str, candidate_langs: list[str]) -> dict:
-        best_text, best_score, best_lang = "", -999, candidate_langs[0]
-        for lang in candidate_langs:
-            try:
-                result = self.pipeline.transcribe([chunk_path], lang=[lang])
-                text = extract_text(result).strip()
-                s = score_text(text)
-                print(f"  [{lang}] score={s} text={text[:60]!r}")
-                if s > best_score:
-                    best_score, best_text, best_lang = s, text, lang
-            except Exception as exc:
-                print(f"  [{lang}] ERROR: {exc}")
-        return {"text": best_text or "[EMPTY]", "language": best_lang}
-
     @modal.fastapi_endpoint(method="POST")
     def transcribe(self, inp: Dict[str, Any]) -> dict:
-        from pydub import AudioSegment
-        import time
-        start_exec = time.time()
+        start_exec = time.perf_counter()
+
         print("\nStart Profiling Execution")
 
         audio_url = inp.get("audio_url")
@@ -144,59 +117,76 @@ class ASREndpoint:
             tmp_audio.flush()
             tmp_audio.close()
 
-            t1 = time.time()
+            t1 = time.perf_counter()
             print(f"[EXEC PROFILING] Decode Audio: {t1 - start_exec:.2f} s")
-            model_card = inp.get("model", DEFAULT_MODEL)
-            if model_card not in LLM_MODELS:
-                return {"error": f"Unknown model '{model_card}'. Valid: {sorted(LLM_MODELS)}"}
 
-            language = inp.get("language", "auto")
+            language = inp.get("source_lang", "auto")
             if language not in LANGUAGE_CODES:
                 return {"error": f"Unknown language '{language}'. Valid: {list(LANGUAGE_CODES)}"}
 
             lang_code = LANGUAGE_CODES[language]
             candidate_langs = [lang_code] if lang_code else ALL_LANG_CODES
 
-            chunk_results = []
-            audio_seg = AudioSegment.from_file(tmp_audio.name)
-            duration_ms = len(audio_seg)
-            print(f"Duration: {duration_ms / 1000:.1f}s")
+            duration_ms = get_audio_duration_ms(tmp_audio.name)
+            print(f"Audio Duration: {duration_ms / 1000:.1f}s")
 
-            t2 = time.time()
+            t2 = time.perf_counter()
             if duration_ms <= CHUNK_DURATION_MS:
                 print("Short audio — single inference")
-                chunk_results.append(self.transcribe_chunk(tmp_audio.name, candidate_langs))
+                chunks = [tmp_audio.name]
+                is_temporary_chunks = False
+                t2_chunking_done = time.perf_counter()
             else:
                 print("Long audio — chunking")
-                chunks = self.split_audio(tmp_audio.name)
-
-                t2_chunking_done = time.time()
+                chunks = split_audio(tmp_audio.name)
+                is_temporary_chunks = False
+                t2_chunking_done = time.perf_counter()
                 print(f"[EXEC PROFILING] Chunking Process: {t2_chunking_done - t1:.2f} s")
+            
+            best_results_per_chunk = [{"text": "[EMPTY]", "score": -999, "language": candidate_langs[0]} for _ in chunks]
 
-                try:
-                    for idx, cp in enumerate(chunks):
-                        print(f"Chunk {idx + 1}/{len(chunks)}")
-                        chunk_results.append(self.transcribe_chunk(cp, candidate_langs))
-                finally:
+            try:
+                for lang in candidate_langs:
+                    try:
+                        print(f"Processing batch inference for language: {lang}")
+                        batch_results = self.pipeline.transcribe(chunks, lang=[lang] * len(chunks))
+
+                        for idx, result in enumerate(batch_results):
+                            text = extract_text([result] if not isinstance(result, list) else result).strip()
+                            score = score_text(text)
+
+                            if score > best_results_per_chunk[idx]["score"]:
+                                best_results_per_chunk[idx] = {
+                                    "text": text or "[EMPTY]",
+                                    "score": score,
+                                    "language": lang
+                                }
+                    except Exception as exc:
+                        print(f"  [{lang}] BATCH INFERENCE ERROR: {exc}")
+
+            finally:
+                if is_temporary_chunks:
                     for cp in chunks:
                         if os.path.exists(cp):
                             os.remove(cp)
 
-            t3 = time.time()
+            t3 = time.perf_counter()
             print(f"[EXEC PROFILING] Total Inference {len(candidate_langs)} Lang: {t3 - t2_chunking_done if duration_ms > CHUNK_DURATION_MS else t3 - t2:.2f} s")
 
             # Merge results
             final_text = ""
-            for i, c in enumerate(chunk_results):
-                text = c["text"]
+            chunk_results_response = []
+            for i, res in enumerate(best_results_per_chunk):
+                text = res["text"]
                 final_text = text if i == 0 else final_text + " " + remove_duplicate_tail(final_text, text)
+                chunk_results_response.append({"text": text, "language": res["language"]})
             
             lang_counts = {}
-            for c in chunk_results:
-                lang_counts[c["language"]] = lang_counts.get(c["language"], 0) + 1
+            for res in best_results_per_chunk:
+                lang_counts[res["language"]] = lang_counts.get(res["language"], 0) + 1
             dominant_lang = max(lang_counts, key=lang_counts.__getitem__)
 
-            t4 = time.time()
+            t4 = time.perf_counter()
             print(f"[EXEC PROFILING] Merging & Result: {t4 - t3:.2f} s")
             print(f"[EXEC PROFILING] Total Execution time: {t4 - start_exec:.2f} s")
             print("Profiling execution time done\n")
@@ -204,7 +194,8 @@ class ASREndpoint:
             return {
                 "transcript": final_text.strip(),
                 "language_detected": dominant_lang,
-                "chunks": chunk_results,
+                "chunks": chunk_results_response,
+                "modal_execution_time": t4 - start_exec
             }
 
         finally:

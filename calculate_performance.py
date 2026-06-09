@@ -25,7 +25,7 @@ PAYLOAD = {
 
 def measure_request_time(test_name: str):
     print(f"\n--- Starting Test: {test_name} ---")
-    start_time = time.time()
+    start_time = time.perf_counter()
     
     try:
         # 1. Send Request
@@ -44,7 +44,7 @@ def measure_request_time(test_name: str):
 
             if status == "COMPLETED":
                 # Record time when fully completed
-                end_time = time.time()
+                end_time = time.perf_counter()
                 total_time = end_time - start_time
                 
                 # Fetch internal metrics from RunPod server
