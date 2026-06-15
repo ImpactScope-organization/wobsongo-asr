@@ -40,12 +40,12 @@ with st.container():
             "ASR Model:",
             options=[
                 "Omnilingual ASR",
-                "Whisper Small (Original)",
-                "Whisper Large-V3 (Original)",
-                "Whisper Large-V3 (With Augmentation)",
-                "Whisper Small (With Augmentation)",
-                "Whisper Large-V3 (No Augmentation)",
-                "Whisper Small (No Augmentation)"
+                "Whisper Small (Untrained)",
+                "Whisper Large-V3 (Untrained)",
+                "Whisper Large-V3 (Augmentation)",
+                "Whisper Small (Augmentation)",
+                "Whisper Large-V3",
+                "Whisper Small"
 
             ],
             help="Select the AI model used to transcribe the audio."

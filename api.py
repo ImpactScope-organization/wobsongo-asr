@@ -100,12 +100,12 @@ class ASREndpoint:
                 gc.collect()
 
             MODEL_PATHS = {
-                "Whisper Small (Original)": "/whisper_data/whisper-small-original",
-                "Whisper Large-V3 (Original)": "/whisper_data/whisper-large-v3-original",
-                "Whisper Large-V3 (With Augmentation)": "/whisper_data/whisper-large-v3-dioula-split8020-final",
-                "Whisper Small (With Augmentation)": "/whisper_data/whisper-small-dioula-split8020-final",
-                "Whisper Large-V3 (No Augmentation)": "/whisper_data/whisper-large-v3-NO-AUG-final",
-                "Whisper Small (No Augmentation)": "/whisper_data/whisper-small-NO-AUG-final"
+                "Whisper Small (Untrained)": "/whisper_data/whisper-small-original",
+                "Whisper Large-V3 (Untrained)": "/whisper_data/whisper-large-v3-original",
+                "Whisper Large-V3 (Augmentation)": "/whisper_data/whisper-large-v3-dioula-split8020-final",
+                "Whisper Small (Augmentation)": "/whisper_data/whisper-small-dioula-split8020-final",
+                "Whisper Large-V3": "/whisper_data/whisper-large-v3-NO-AUG-final",
+                "Whisper Small": "/whisper_data/whisper-small-NO-AUG-final"
             }
             
             model_path = MODEL_PATHS.get(requested_model)
@@ -117,7 +117,6 @@ class ASREndpoint:
             
             from transformers import WhisperForConditionalGeneration, WhisperProcessor, pipeline
             
-            # Deteksi Base Model yang harus dipakai
             if "Small" in requested_model:
                 base_model_path = "/whisper_data/whisper-small-original"
             else:
@@ -126,13 +125,14 @@ class ASREndpoint:
             print(f"[PROFILING] Preparing processor from base model {base_model_path}...")
             processor = WhisperProcessor.from_pretrained(base_model_path)
 
-            if "Original" in requested_model:
-                print(f"[PROFILING] Loading Original Base Model into pipeline...")
+            if "Untrained" in requested_model:
+                print(f"[PROFILING] Loading Untrained Base Model into pipeline...")
                 self.whisper_pipeline = pipeline(
                     "automatic-speech-recognition", 
                     model=base_model_path, 
                     device="cuda",
                     chunk_length_s=10,
+                    stride_length_s=[2, 2],
                     torch_dtype=torch.float16
                 )
             else:
@@ -157,7 +157,8 @@ class ASREndpoint:
                     tokenizer=processor.tokenizer,
                     feature_extractor=processor.feature_extractor,
                     device="cuda",
-                    chunk_length_s=30,
+                    chunk_length_s=10,
+                    stride_length_s=[2, 2],
                     torch_dtype=torch.float16
                 )
             
@@ -260,10 +261,12 @@ class ASREndpoint:
             else:
                 t2 = time.perf_counter()
                 generate_kwargs = {
-                    "repetition_penalty": 1.2,
+                    "repetition_penalty": 1.1,
+                    "no_repeat_ngram_size": 3,
+                    "max_new_tokens": 128
                 }
                 
-                is_finetuned_dioula = "Original" not in requested_model
+                is_finetuned_dioula = "Untrained" not in requested_model
                 
                 if is_finetuned_dioula:
                     generate_kwargs["language"] = "french"
