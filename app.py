@@ -36,6 +36,21 @@ with st.container():
         input_audio_url = st.text_input("Use Audio URLs:")
         
     with col2:
+        model_choice = st.selectbox(
+            "ASR Model:",
+            options=[
+                "Omnilingual ASR",
+                "Whisper Small (Original)",
+                "Whisper Large-V3 (Original)",
+                "Whisper Large-V3 (With Augmentation)",
+                "Whisper Small (With Augmentation)",
+                "Whisper Large-V3 (No Augmentation)",
+                "Whisper Small (No Augmentation)"
+
+            ],
+            help="Select the AI model used to transcribe the audio."
+        )
+
         target_language_choice = st.selectbox(
             "Target Translation:", 
             options=["English", "French"]
@@ -79,7 +94,7 @@ if st.button("Start the Analysis Process", type="primary", use_container_width=T
             st.subheader("ASR Transcription")
             with st.spinner("The ASR engine is working..."):
                 asr_result = modules["transcriber"].transcribe(
-                    model=ModelType.OMNILINGUAL,
+                    model=model_choice,
                     target_lang=asr_target_lang,
                     source_lang=source_language_choice,
                     audio=audio_path,

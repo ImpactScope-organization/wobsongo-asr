@@ -41,10 +41,9 @@ class ModalTranscriber(TranscriberProtocol):
     ) -> TranscriptionOutput | dict[str, str]:
         
         start_client_time = time.perf_counter()
-        req_start = time.perf_counter()
 
         payload = {
-            "model": "omniASR_LLM_3B",
+            "model": model,
             "source_lang": source_lang
         }
 
