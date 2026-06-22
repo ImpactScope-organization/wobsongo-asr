@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import modal
 from openai import OpenAI
 from dataclasses import dataclass
 from dotenv import load_dotenv
@@ -23,16 +24,37 @@ class LLMTranslator:
             "mos_Latn": "Mooré",
             "dyu_Latn": "Dioula",
             "fra_Latn": "French",
-            "eng_Latn": "English"
+            "eng_Latn": "English",
+            "auto": "Auto",
+            "dioula": "Dioula",
+            "french": "French",
+            "english": "English",
+            "moore": "Mooré"
         }
 
-    def translate_text(self, text: str, source_lang: str, target_lang: str) -> TranslationOutput:
-        """
-        Translate text from the source language to the target language using OpenAI Tool Calling.
-        """
+    def translate_text(self, text: str, source_lang: str, target_lang: str, model_choice: str = "OpenAI (GPT-4o-mini)") -> TranslationOutput:
         if not text or not str(text).strip(): 
             return TranslationOutput(original_text=text, translated_text="")
-        
+            
+        if model_choice == "Gemma 4 (Fine-Tuned)":
+            return self._translate_with_gemma(text, source_lang, target_lang)
+        else:
+            return self._translate_with_openai(text, source_lang, target_lang)
+
+    def _translate_with_gemma(self, text: str, source_lang: str, target_lang: str) -> TranslationOutput:
+        try:
+            GemmaService = modal.Cls.from_name("gemma-translator-service", "GemmaTranslator")
+            
+            gemma_instance = GemmaService()
+            
+            translated_text = gemma_instance.translate.remote(text, source_lang, target_lang)
+            
+            return TranslationOutput(original_text=text, translated_text=translated_text)
+        except Exception as e:
+            print(f"Error calling Modal Gemma API: {e}")
+            return TranslationOutput(original_text=text, translated_text=f"[Gemma 4 API Offline/Error] {str(e)}")
+
+    def _translate_with_openai(self, text: str, source_lang: str, target_lang: str) -> TranslationOutput:
         human_source_lang = self.language_map.get(source_lang, source_lang)
 
         tools = [
@@ -78,9 +100,7 @@ class LLMTranslator:
                 if message.tool_calls:
                     json_output_str = message.tool_calls[0].function.arguments
                     parsed_data = json.loads(json_output_str)
-                    
                     final_translation = parsed_data.get("Translated_Text", "")
-                    
                     return TranslationOutput(original_text=text, translated_text=final_translation)
                 
             except Exception as e:

@@ -28,7 +28,7 @@ st.title("Wobsongo Audio AI Pipeline")
 with st.container():
     st.subheader("1. Data Input")
     
-    col1, col2, col3 = st.columns([1, 1, 2])
+    col1, col2, col3, col4 = st.columns([1, 1, 1, 1.5])
     
     with col1:
         uploaded_audio = st.file_uploader("Upload File Audio")
@@ -46,23 +46,33 @@ with st.container():
                 "Whisper Small (Augmentation)",
                 "Whisper Large-V3",
                 "Whisper Small"
-
             ],
-            help="Select the AI model used to transcribe the audio."
-        )
-
-        target_language_choice = st.selectbox(
-            "Target Translation:", 
-            options=["English", "French"]
+            help="Select the AI model used to transcribe the audio.",
+            key="asr_model_select"
         )
 
         source_language_choice = st.selectbox(
             "Source Language (Audio):",
             options=["auto", "french", "english", "moore", "dioula"],
-            help="Select a specific language for the audio to be transcribed."
+            help="Select a specific language for the audio to be transcribed.",
+            key="source_lang_select"
+        )
+
+    with col3:
+        target_language_choice = st.selectbox(
+            "Target Translation:", 
+            options=["English", "French"],
+            key="target_lang_select"
         )
         
-    with col3:
+        translator_model_choice = st.selectbox(
+            "Translation Model:", 
+            options=["OpenAI (GPT-4o-mini)", "Gemma 4 (Fine-Tuned)"],
+            help="Choose between OpenAI or Fine-Tuned Gemma Model.",
+            key="translator_model_select"
+        )
+        
+    with col4:
         human_transcript = st.text_area(
             "Human Transcription (Optional):", 
             height=150, 
@@ -105,14 +115,15 @@ if st.button("Start the Analysis Process", type="primary", use_container_width=T
                 with st.expander("View Raw Transcript"):
                     st.write(asr_result.transcript)
 
-            # Translation (OpenAI)
+            # Translation (OpenAI / Gemma)
             st.subheader(f"Translation into {target_language_choice}")
-            with st.spinner(f"Translating text into {target_language_choice}..."):
+            with st.spinner(f"Translating text using {translator_model_choice}..."):
                 # Translate ASR Machine Results
                 machine_translation = modules["translator"].translate_text(
                     text=asr_result.transcript, 
                     source_lang=asr_result.language_selected,
-                    target_lang=target_language_choice
+                    target_lang=target_language_choice,
+                    model_choice=translator_model_choice
                 )
                 
                 # Translate human transcript
@@ -121,7 +132,8 @@ if st.button("Start the Analysis Process", type="primary", use_container_width=T
                     human_translate = modules["translator"].translate_text(
                         text=human_transcript, 
                         source_lang=asr_result.language_selected,
-                        target_lang=target_language_choice
+                        target_lang=target_language_choice,
+                        model_choice=translator_model_choice
                     )
 
                 # Show Translation Results
