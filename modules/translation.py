@@ -55,14 +55,21 @@ class LLMTranslator:
             return TranslationOutput(original_text=text, translated_text=f"[Gemma 4 API Offline/Error] {str(e)}")
 
     def _translate_with_openai(self, text: str, source_lang: str, target_lang: str) -> TranslationOutput:
-        human_source_lang = self.language_map.get(source_lang, source_lang)
+        human_source_lang = self.language_map.get(source_lang.lower(), source_lang)
+
+        if human_source_lang.lower() == "auto":
+            tool_desc = f"Detect the language of the raw transcript and translate it to {target_lang}."
+            system_msg = f"You are an expert linguist specializing in West African languages. First, detect the language of the provided text. Then, translate it into {target_lang} accurately using the provided tool. Maintain the original meaning accurately."
+        else:
+            tool_desc = f"Translate the raw {human_source_lang} transcript to {target_lang}."
+            system_msg = f"You are an expert linguist specializing in West African languages. Translate the following {human_source_lang} text into {target_lang} accurately using the provided tool. Maintain the original meaning accurately."
 
         tools = [
             {
                 "type": "function",
                 "function": {
                     "name": "provide_translation",
-                    "description": f"Translate the raw {human_source_lang} transcript to {target_lang}.",
+                    "description": tool_desc,
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -85,7 +92,7 @@ class LLMTranslator:
                 response = self.client.chat.completions.create(
                     model="gpt-4o-mini", 
                     messages=[
-                        {"role": "system", "content": f"You are an expert linguist specializing in West African languages. Translate the following {human_source_lang} text into {target_lang} accurately using the provided tool. Maintain the original meaning accurately."},
+                        {"role": "system", "content": system_msg},
                         {"role": "user", "content": text}
                     ],
                     tools=tools,
