@@ -42,4 +42,11 @@ jobs:
             -H "accept: application/json" \
             -H "x-api-key: ${{ secrets.DOKPLOY_AUTH_TOKEN }}" \
             -H "Content-Type: application/json" \
-            -d "{\"applicationId\": \"${{ secrets.DOKPLOY_STREAMLIT_ASR_APPLICATION_ID }}\"}"
+            -d '{
+              "applicationId": "${{ secrets.DOKPLOY_STREAMLIT_ASR_APPLICATION_ID }}",
+              "env": [
+                {"key": "MODAL_PROFILE", "value": "${{ secrets.MODAL_PROFILE }}"},
+                {"key": "MODAL_TOKEN_ID", "value": "${{ secrets.MODAL_TOKEN_ID }}"},
+                {"key": "MODAL_TOKEN_SECRET", "value": "${{ secrets.MODAL_TOKEN_SECRET }}"}
+              ]
+            }'
