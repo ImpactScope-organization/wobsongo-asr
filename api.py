@@ -1,5 +1,4 @@
 import base64
-import json
 import os
 import tempfile
 import urllib.request
@@ -7,9 +6,11 @@ import modal
 from typing import Dict, Any
 import time
 import gc
+import shutil
 from modules.audio_utils import split_audio, get_audio_duration_ms
 
 image = (modal.Image.from_dockerfile("modal.Dockerfile")
+         .apt_install("ffmpeg")
          .pip_install("transformers", "accelerate", "peft")
          .add_local_python_source("modules")
 )
@@ -59,6 +60,7 @@ def remove_duplicate_tail(prev: str, curr: str) -> str:
         "/omni_data": volume_omni,
         "/whisper_data": volume_whisper
     },
+    secrets=[modal.Secret.from_name("apify-token")],
     timeout=1800,
     scaledown_window=300
 )
@@ -189,7 +191,17 @@ class ASREndpoint:
         
         try:
             if audio_url:
-                urllib.request.urlretrieve(audio_url, tmp_audio.name)
+                apify_token = os.environ.get("APIFY_TOKEN")
+                if apify_token and "api.apify.com" in audio_url:
+                    sep = "&" if "?" in audio_url else "?"
+                    audio_url = f"{audio_url}{sep}token={apify_token}"
+
+                req = urllib.request.Request(
+                    audio_url,
+                    headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+                )
+                with urllib.request.urlopen(req) as response, open(tmp_audio.name, 'wb') as out_file:
+                    shutil.copyfileobj(response, out_file)
             else:
                 tmp_audio.write(base64.b64decode(audio_b64))
             tmp_audio.flush()
