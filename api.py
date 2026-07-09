@@ -80,6 +80,7 @@ class ASREndpoint:
         self.whisper_pipeline = None
         print("Endpoint ready for dynamic routing.\n")
 
+    # Switch model based on the requested model name
     def _switch_model(self, requested_model: str):
         if self.current_model_name == requested_model:
             return
