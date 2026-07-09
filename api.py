@@ -33,6 +33,7 @@ LANGUAGE_CODES = {
 }
 ALL_LANG_CODES = ["mos_Latn", "dyu_Latn", "fra_Latn", "eng_Latn"]
 
+# Helper functions for processing ASR results
 def extract_text(result) -> str:
     if isinstance(result, list) and result:
         first = result[0]
@@ -44,6 +45,7 @@ def extract_text(result) -> str:
 def score_text(text: str) -> int:
     return -100 if not text or not text.strip() else len(text)
 
+# Remove duplicate tail words between two strings
 def remove_duplicate_tail(prev: str, curr: str) -> str:
     pw, cw = prev.split(), curr.split()
     limit = min(len(pw), len(cw), 10)
