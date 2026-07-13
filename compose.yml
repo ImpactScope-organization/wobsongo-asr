@@ -1,0 +1,24 @@
+name: "wobsongo-asr"
+
+services:
+  docling-api:
+    image: quay.io/docling-project/docling-serve-cu130:v1.18.0
+    container_name: docling-serve-local-gpu
+    ports:
+      - "5001:5001"
+    environment:
+      - DOCLING_SERVE_ENABLE_UI=true
+      - UVICORN_WORKERS=1
+    volumes:
+      - docling-cache:/opt/app-root/src/docling_models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  docling-cache:
