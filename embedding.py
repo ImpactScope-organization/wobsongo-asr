@@ -26,7 +26,8 @@ class EmbedRequest(BaseModel):
     gpu="A10G", 
     volumes={"/models_cache": bge_volume},
     env={"HF_HOME": CACHE_DIR},
-    timeout=600
+    timeout=600,
+    scaledown_window=300
 )
 class BGEM3Model:
     @modal.enter()
