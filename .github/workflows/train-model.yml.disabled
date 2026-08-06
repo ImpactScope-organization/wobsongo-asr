@@ -1,0 +1,173 @@
+name: Train Model
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "training/whisper/**"
+      - "training/gemma/**"
+
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Training target (manual trigger)"
+        type: choice
+        required: true
+        options:
+          - train_whisper_large_core.py
+          - train_whisper_large_no_aug_core.py
+          - train_whisper_small_core.py
+          - train_whisper_small_no_aug_core.py
+          - gemma-moore
+          - gemma-dyula
+
+jobs:
+  detect-changes:
+    if: github.event_name == 'push'
+    name: Detect changed scripts
+    runs-on: ubuntu-latest
+    outputs:
+      whisper_scripts: ${{ steps.whisper.outputs.all_changed_files }}
+      whisper_any_changed: ${{ steps.whisper.outputs.any_changed }}
+      gemma_scripts: ${{ steps.gemma.outputs.all_changed_files }}
+      gemma_any_changed: ${{ steps.gemma.outputs.any_changed }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Check whisper changes
+        id: whisper
+        uses: tj-actions/changed-files@v44
+        with:
+          files: training/whisper/**.py
+          json: true
+
+      - name: Check gemma changes
+        id: gemma
+        uses: tj-actions/changed-files@v44
+        with:
+          files: training/gemma/**.py
+          json: true
+
+  train-whisper-on-push:
+    if: github.event_name == 'push' && needs.detect-changes.outputs.whisper_any_changed == 'true'
+    needs: detect-changes
+    name: Train ${{ matrix.script }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        script: ${{ fromJSON(needs.detect-changes.outputs.whisper_scripts) }}
+    concurrency:
+      group: train-whisper-${{ matrix.script }}
+      cancel-in-progress: true
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Compile check
+        run: python -m py_compile "${{ matrix.script }}"
+
+      - name: Install Modal
+        run: |
+          python -m pip install --upgrade pip
+          pip install modal
+
+      - name: Start training (detached)
+        run: |
+          case "${{ matrix.script }}" in
+            training/whisper/train_whisper_launcher.py)
+              modal run --detach training/whisper/train_whisper_launcher.py --script-name train_whisper_large_core.py
+              modal run --detach training/whisper/train_whisper_launcher.py --script-name train_whisper_large_no_aug_core.py
+              modal run --detach training/whisper/train_whisper_launcher.py --script-name train_whisper_small_core.py
+              modal run --detach training/whisper/train_whisper_launcher.py --script-name train_whisper_small_no_aug_core.py
+              ;;
+            *)
+              SCRIPT_NAME=$(basename "${{ matrix.script }}")
+              modal run --detach training/whisper/train_whisper_launcher.py --script-name "$SCRIPT_NAME"
+              ;;
+          esac
+
+  train-gemma-on-push:
+    if: github.event_name == 'push' && needs.detect-changes.outputs.gemma_any_changed == 'true'
+    needs: detect-changes
+    name: Train ${{ matrix.script }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        script: ${{ fromJSON(needs.detect-changes.outputs.gemma_scripts) }}
+    concurrency:
+      group: train-${{ matrix.script }}
+      cancel-in-progress: true
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Compile check
+        run: python -m py_compile "${{ matrix.script }}"
+
+      - name: Install Modal
+        run: |
+          python -m pip install --upgrade pip
+          pip install modal
+
+      - name: Start training (detached)
+        run: modal run --detach "${{ matrix.script }}"
+
+  train-manual:
+    if: github.event_name == 'workflow_dispatch'
+    name: Train ${{ inputs.target }} (manual)
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    concurrency:
+      group: train-${{ inputs.target }}
+      cancel-in-progress: true
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install Modal
+        run: |
+          python -m pip install --upgrade pip
+          pip install modal
+
+      - name: Start training (detached)
+        run: |
+          case "${{ inputs.target }}" in
+            train_whisper_large_core.py|train_whisper_large_no_aug_core.py|train_whisper_small_core.py|train_whisper_small_no_aug_core.py)
+              modal run --detach training/whisper/train_whisper_launcher.py --script-name "${{ inputs.target }}"
+              ;;
+            gemma-moore)
+              modal run --detach training/gemma/train_gemma_moore.py
+              ;;
+            gemma-dyula)
+              modal run --detach training/gemma/train_gemma_dyula.py
+              ;;
+          esac
