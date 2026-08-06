@@ -27,6 +27,16 @@ def split_audio(file_path: str, chunk_duration_ms: int = 30000, overlap_ms: int 
         i += 1
     return chunks
 
+def normalize_audio(file_path: str) -> str:
+    tmp_dir = tempfile.mkdtemp(prefix="asr_normalized_")
+    audio = AudioSegment.from_file(file_path)
+    audio = audio.set_frame_rate(16000).set_channels(1)
+ 
+    base = os.path.basename(file_path)
+    out_path = os.path.join(tmp_dir, f"{base}_normalized.wav")
+    audio.export(out_path, format="wav")
+    return out_path
+
 def compress_audio_to_ogg_bytes(file_path: str | Path) -> bytes:
     """Compresses audio to 16kHz Mono OGG and returns the byte data."""
     audio_seg = AudioSegment.from_file(file_path)
