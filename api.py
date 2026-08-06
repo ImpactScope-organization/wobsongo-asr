@@ -7,7 +7,7 @@ from typing import Dict, Any
 import time
 import gc
 import shutil
-from modules.audio_utils import split_audio, get_audio_duration_ms
+from modules.audio_utils import split_audio, get_audio_duration_ms, normalize_audio
 
 image = (modal.Image.from_dockerfile("modal.Dockerfile")
          .apt_install("ffmpeg")
@@ -191,6 +191,9 @@ class ASREndpoint:
             return {"error": f"Failed to load model: {str(e)}"}
 
         tmp_audio = tempfile.NamedTemporaryFile(suffix=f".{audio_fmt}", delete=False, mode="wb")
+
+        is_temporary_chunks = False
+        chunks = []
         
         try:
             if audio_url:
@@ -224,8 +227,9 @@ class ASREndpoint:
                 t2 = time.perf_counter()
                 if duration_ms <= CHUNK_DURATION_MS:
                     print("Short audio — single inference")
-                    chunks = [tmp_audio.name]
-                    is_temporary_chunks = False
+                    normalized_path = normalize_audio(tmp_audio.name)
+                    chunks = [normalized_path]
+                    is_temporary_chunks = True
                     t2_chunking_done = time.perf_counter()
                 else:
                     print("Long audio — chunking")
@@ -317,5 +321,7 @@ class ASREndpoint:
             }
 
         finally:
-            if os.path.exists(tmp_audio.name):
-                os.remove(tmp_audio.name)
+            if is_temporary_chunks:
+                for cp in chunks:
+                    if os.path.exists(cp):
+                        os.remove(cp)
