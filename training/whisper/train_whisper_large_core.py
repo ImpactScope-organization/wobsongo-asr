@@ -5,7 +5,7 @@ import wandb
 import random
 from dataclasses import dataclass
 from typing import Any, Dict, List, Union
-from datasets import load_from_disk, load_dataset, Audio, concatenate_datasets
+from datasets import load_dataset, Audio
 from transformers import (
     WhisperForConditionalGeneration,
     WhisperProcessor,
@@ -18,15 +18,11 @@ from accelerate import PartialState
 import evaluate
 
 LOCAL_RANK = int(os.environ.get("LOCAL_RANK", 0))
-print(f"[PROC] whisper-large (aug) | LOCAL_RANK={LOCAL_RANK}, "
+print(f"[PROC] whisper-large (aug, koumankan-split) | LOCAL_RANK={LOCAL_RANK}, "
       f"RANK={os.environ.get('RANK')}, WORLD_SIZE={os.environ.get('WORLD_SIZE')}")
 
 model_id = "openai/whisper-large-v3"
 processor = WhisperProcessor.from_pretrained(model_id, language="french", task="transcribe")
-
-def attach_audio_path(row):
-    row["audio_path"] = "/data/dioula-dataset/" + row["file_name"]
-    return row
 
 torch.cuda.set_device(LOCAL_RANK)
 
@@ -39,26 +35,34 @@ def prepare_dataset(batch):
     batch["labels"] = processor.tokenizer(target_text).input_ids
     return batch
 
+
 with PartialState().local_main_process_first():
-    print("Loading datasets from Modal Volume...")
-    dataset_mcv = load_dataset("csv", data_files="/data/dioula-dataset/metadata.csv", split="train")
-    dataset_mcv = dataset_mcv.map(attach_audio_path)
-    dataset_mcv = dataset_mcv.cast_column("audio_path", Audio(sampling_rate=16000))
-    dataset_mcv = dataset_mcv.rename_column("audio_path", "audio")
+    print("Loading Koumankan4Dyula using its OFFICIAL published splits...")
+    dataset_train = load_dataset("uvci/koumankan4dyula", split="train")
+    dataset_dev = load_dataset("uvci/koumankan4dyula", split="validation")
+    dataset_test = load_dataset("uvci/koumankan4dyula", split="test")
 
-    dataset_uvci = load_from_disk("/data/uvci_data")
-    dataset_uvci = dataset_uvci.cast_column("audio", Audio(sampling_rate=16000))
+    dataset_train = dataset_train.cast_column("audio", Audio(sampling_rate=16000))
+    dataset_dev = dataset_dev.cast_column("audio", Audio(sampling_rate=16000))
+    dataset_test = dataset_test.cast_column("audio", Audio(sampling_rate=16000))
 
-    combined_dataset = concatenate_datasets([dataset_mcv, dataset_uvci])
+    print(f"Training Data   : {len(dataset_train)} rows (~8h)")
+    print(f"Dev/Validation  : {len(dataset_dev)} rows (~1h36m)")
+    print(f"Test (held-out) : {len(dataset_test)} rows (~45m)")
 
-    print("Splitting dataset into 80% Training and 20% Testing...")
-    split_dataset = combined_dataset.train_test_split(test_size=0.2, seed=42)
-    print(f"Training Data : {len(split_dataset['train'])} rows")
-    print(f"Testing Data  : {len(split_dataset['test'])} rows")
+    # TODO: Challenge probe
+    # dataset_challenge = load_dataset(...)
+    # dataset_challenge = dataset_challenge.cast_column("audio", Audio(sampling_rate=16000))
 
     print("Processing audio into a spectrogram matrix...")
-    processed_dataset = split_dataset.map(
-        prepare_dataset, remove_columns=combined_dataset.column_names, num_proc=4
+    processed_train = dataset_train.map(
+        prepare_dataset, remove_columns=dataset_train.column_names, num_proc=4
+    )
+    processed_dev = dataset_dev.map(
+        prepare_dataset, remove_columns=dataset_dev.column_names, num_proc=4
+    )
+    processed_test = dataset_test.map(
+        prepare_dataset, remove_columns=dataset_test.column_names, num_proc=4
     )
 
 model = WhisperForConditionalGeneration.from_pretrained(model_id, torch_dtype=torch.float16)
@@ -73,20 +77,23 @@ model = get_peft_model(model, lora_config)
 model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language="french", task="transcribe")
 model.generation_config.forced_decoder_ids = processor.get_decoder_prompt_ids(language="french", task="transcribe")
 
+
 @dataclass
 class WhisperDataCollatorWithPadding:
     processor: Any
+    apply_augmentation: bool = True 
 
     def __call__(self, features: List[Dict[str, Union[List[int], torch.Tensor]]]) -> Dict[str, torch.Tensor]:
         input_features = [{"input_features": feature["input_features"]} for feature in features]
         batch = self.processor.feature_extractor.pad(input_features, return_tensors="pt")
 
-        freq_mask_param = 15
-        n_mels = batch["input_features"].shape[1]
-        for i in range(len(batch["input_features"])):
-            if random.random() < 0.3:
-                f0 = random.randint(0, n_mels - freq_mask_param)
-                batch["input_features"][i, f0:f0 + freq_mask_param, :] = 0.0
+        if self.apply_augmentation:
+            freq_mask_param = 15
+            n_mels = batch["input_features"].shape[1]
+            for i in range(len(batch["input_features"])):
+                if random.random() < 0.3:
+                    f0 = random.randint(0, n_mels - freq_mask_param)
+                    batch["input_features"][i, f0:f0 + freq_mask_param, :] = 0.0
 
         label_features = [{"input_ids": feature["labels"]} for feature in features]
         labels_batch = self.processor.tokenizer.pad(label_features, return_tensors="pt")
@@ -99,7 +106,10 @@ class WhisperDataCollatorWithPadding:
         batch["input_features"] = batch["input_features"].to(torch.float16)
         return batch
 
-data_collator = WhisperDataCollatorWithPadding(processor=processor)
+
+train_data_collator = WhisperDataCollatorWithPadding(processor=processor, apply_augmentation=True)
+eval_data_collator = WhisperDataCollatorWithPadding(processor=processor, apply_augmentation=False)
+
 metric_wer = evaluate.load("wer")
 metric_cer = evaluate.load("cer")
 
@@ -116,7 +126,7 @@ def compute_metrics(pred):
 
 
 training_args = Seq2SeqTrainingArguments(
-    output_dir="/output/new_large_checkpoints_split8020",
+    output_dir="/output/checkpoints_large_koumankan_split_aug",
     per_device_train_batch_size=8,
     gradient_accumulation_steps=2,
     learning_rate=1e-4,
@@ -136,19 +146,20 @@ training_args = Seq2SeqTrainingArguments(
     save_steps=52,
     logging_steps=52,
     report_to="wandb",
-    run_name="whisper-large-v3-dioula-singlenode",
+    run_name="whisper-large-v3-koumankan-split-aug",
     ddp_find_unused_parameters=False,
 )
 
 trainer = Seq2SeqTrainer(
     args=training_args,
     model=model,
-    train_dataset=processed_dataset["train"],
-    eval_dataset=processed_dataset["test"],
-    data_collator=data_collator,
+    train_dataset=processed_train,
+    eval_dataset=processed_dev, 
+    data_collator=train_data_collator,
     compute_metrics=compute_metrics,
     processing_class=processor.feature_extractor,
 )
+trainer.data_collator = eval_data_collator if False else trainer.data_collator
 
 is_main_process = trainer.is_world_process_zero()
 
@@ -156,18 +167,18 @@ if is_main_process:
     wandb.init(
         project="wobsongo-whisper-dioula",
         resume="allow",
-        name="whisper-large-v3-dioula-singlenode",
+        name="whisper-large-v3-koumankan-split-aug",
         config={
             "architecture": "Whisper-Large-V3",
             "method": "LoRA + SpecAugment + Single-node DDP",
-            "dataset": "Mozilla-CV17 (272 rows) + UVCI-Koumankan Train (8065 rows)",
+            "dataset": "UVCI-Koumankan4Dyula (official split: train 8065 / val 1471 / test 1393)",
             "num_nodes": os.environ.get("WORLD_SIZE"),
         },
     )
 
 if is_main_process:
     print("Igniting training engine...")
-last_checkpoint = get_last_checkpoint("/output/new_large_checkpoints_split8020")
+last_checkpoint = get_last_checkpoint("/output/checkpoints_large_koumankan_split_aug")
 
 if last_checkpoint is not None:
     if is_main_process:
@@ -180,10 +191,20 @@ else:
 
 if is_main_process:
     print("Saving the final model to Volume...")
-    final_output_path = "/output/new_whisper-large-v3-dioula-split8020-final"
+    final_output_path = "/output/whisper-large-v3-koumankan-aug-final"
     trainer.save_model(final_output_path)
     processor.save_pretrained(final_output_path)
     model_volume = modal.Volume.from_name("finetuned-model")
     model_volume.commit()
-    print("Done! whisper-large (aug) training complete.")
+
+    print("Running final held-out TEST evaluation (Koumankan4Dyula official test split)...")
+    trainer.data_collator = eval_data_collator 
+    test_metrics = trainer.evaluate(eval_dataset=processed_test, metric_key_prefix="test")
+    print(f"Final TEST metrics: {test_metrics}")
+    wandb.log(test_metrics)
+
+    # TODO: challenge probe evaluation
+    # metric_key_prefix="challenge"))
+
+    print("Done! whisper-large (aug, koumankan official split) training complete.")
     wandb.finish()
