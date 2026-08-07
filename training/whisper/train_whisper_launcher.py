@@ -23,6 +23,7 @@ app = modal.App("whisper-dioula-finetune-multigpu")
 
 dataset_volume = modal.Volume.from_name("dioula-dataset")
 model_volume = modal.Volume.from_name("finetuned-model", create_if_missing=True)
+bambara_model_volume = modal.Volume.from_name("bambara-model-base") 
 
 NUM_GPUS = 8
 
@@ -34,6 +35,7 @@ NUM_GPUS = 8
     volumes={
         "/data": dataset_volume,
         "/output": model_volume,
+        "/models": bambara_model_volume,
     },
     secrets=[modal.Secret.from_name("wandb-secret")],
 )
@@ -60,12 +62,14 @@ def main(script_name: str = "train_whisper_large_core.py"):
       modal run train_whisper_launcher.py --script-name train_whisper_large_no_aug_core.py
       modal run train_whisper_launcher.py --script-name train_whisper_small_core.py
       modal run train_whisper_launcher.py --script-name train_whisper_small_no_aug_core.py
+      modal run train_whisper_launcher.py --script-name train_whisper_bambara_base_core.py
     """
     valid_scripts = {
         "train_whisper_large_core.py",
         "train_whisper_large_no_aug_core.py",
         "train_whisper_small_core.py",
         "train_whisper_small_no_aug_core.py",
+         "train_whisper_bambara_base_core.py",
     }
     assert script_name in valid_scripts, f"script_name must be one of: {valid_scripts}"
     train_whisper_multigpu.remote(script_name)
