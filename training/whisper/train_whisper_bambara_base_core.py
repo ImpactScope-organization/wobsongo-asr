@@ -214,7 +214,18 @@ training_args = Seq2SeqTrainingArguments(
     label_names=["labels"],
 )
 
-trainer = Seq2SeqTrainer(
+class CleanEvalSeq2SeqTrainer(Seq2SeqTrainer):
+    def get_eval_dataloader(self, eval_dataset=None):
+        original_collator = self.data_collator
+        self.data_collator = eval_data_collator
+        try:
+            dataloader = super().get_eval_dataloader(eval_dataset)
+        finally:
+            self.data_collator = original_collator
+        return dataloader
+
+
+trainer = CleanEvalSeq2SeqTrainer(
     args=training_args,
     model=model,
     train_dataset=processed_train,
@@ -265,9 +276,8 @@ if is_main_process:
     processor.save_pretrained(final_output_path)
     model_volume = modal.Volume.from_name("finetuned-model")
     model_volume.commit()
-    print("Running final test evaluation (Koumankan4Dyula official test split)...")
+    print("Running final test evaluation (Mozilla Common Voice Dioula, external test set)...")
 
-trainer.data_collator = eval_data_collator
 print("processed_test columns:", processed_test.column_names)
 print("processed_dev columns:", processed_dev.column_names)
 test_metrics = trainer.evaluate(eval_dataset=processed_test, metric_key_prefix="test")
