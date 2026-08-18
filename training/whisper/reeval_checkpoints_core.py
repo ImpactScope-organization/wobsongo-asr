@@ -31,23 +31,13 @@ RESULTS_CSV = "/output/reeval_clean_results.csv"
 DETAIL_CSV = "/output/reeval_best_checkpoint_utterance_detail.csv"
 HUMAN_PANEL_CSV = "/output/reeval_human_panel_sample.csv"
 
-# Optional: set this to a dyu->fr MT model path/name to enable the
-# meaning-preservation chrF check requested in review. Koumankan4Dyula
-# ships dyu->fr / dyu->en translations, so the reference text should
-# exist in MT_REFERENCE_COLUMN if present in the dataset.
 MT_MODEL_PATH = None
 MT_REFERENCE_COLUMN = "fr"
 
 # How many utterances to sample for the human intelligibility panel
-# (review: "50-100 utterances rated 1-5 by a native speaker").
 HUMAN_PANEL_SAMPLE_SIZE = 75
 
 processor = WhisperProcessor.from_pretrained(BASE_MODEL_PATH, language="french", task="transcribe")
-
-
-# ---------------------------------------------------------------------------
-# Dataset prep
-# ---------------------------------------------------------------------------
 
 def get_target_text(example):
     return example.get("dyu") or example.get("sentence") or example.get("transcription") or example.get("text") or ""
@@ -74,11 +64,6 @@ dataset_dev = dataset_dev.cast_column("audio", Audio(sampling_rate=16000))
 processed_dev = dataset_dev.map(prepare_dataset, remove_columns=dataset_dev.column_names, num_proc=4)
 print(f"Dev set: {len(processed_dev)} rows")
 
-# Computed once, reused both per-checkpoint (truncation-flagging columns in
-# the summary CSV, since review lists length/duration bucketing under
-# "reporting") and in the best-checkpoint diagnostic report below.
-# Indices line up with processed_dev / dataset_dev row order (no shuffling
-# happens between here and eval/predict).
 ref_lengths = [len(get_target_text(ex).split()) for ex in dataset_dev]
 audio_durations = [len(a["array"]) / a["sampling_rate"] for a in dataset_dev["audio"]]
 
@@ -107,13 +92,7 @@ eval_data_collator = CleanWhisperDataCollator(processor=processor)
 metric_wer = evaluate.load("wer")
 metric_cer = evaluate.load("cer")
 
-
-# ---------------------------------------------------------------------------
-# Normalizers
-# ---------------------------------------------------------------------------
-
 def normalize_text_legacy(text):
-    """Current production normalizer (kept for the disagreement diagnostic)."""
     text = text.lower()
     text = re.sub(r"[.,!?;:'\"]", "", text)
     text = re.sub(r"\s+", " ", text).strip()
@@ -166,11 +145,6 @@ def degeneracy_stats(pred_str):
         "pct_french_leak": 100 * french_leak / n,
         "pct_repeated_ngram": 100 * repeated / n,
     }
-
-
-# ---------------------------------------------------------------------------
-# Bootstrap helpers
-# ---------------------------------------------------------------------------
 
 def bootstrap_wer_ci(refs, hyps, n_resamples=500, ci=0.95, seed=42):
     n = len(refs)
@@ -227,7 +201,7 @@ def paired_bootstrap_wer_diff(refs, hyps_a, hyps_b, n_resamples=500, ci=0.95, se
         "mean_diff": sum(diffs) / len(diffs),
         "diff_ci_low": diffs[lo],
         "diff_ci_high": diffs[hi],
-        "significant": diffs[lo] > 0 or diffs[hi] < 0,  # interval doesn't cross 0
+        "significant": diffs[lo] > 0 or diffs[hi] < 0, 
     }
 
 
@@ -246,10 +220,6 @@ def top_substitution_pairs(refs, hyps, top_k=15):
 
 
 def compute_meaning_preserved_chrf(hyps_raw, dataset, mt_model_path, target_column=MT_REFERENCE_COLUMN):
-    """Optional diagnostic from review: WER can't tell a meaning-flipping
-    substitution (e.g. a negation) apart from a spelling-variant one.
-    Translate the dyu hypothesis to fr and score chrF against the fr
-    reference that Koumankan4Dyula ships. Needs sacrebleu + an MT model."""
     if mt_model_path is None:
         print("[INFO] MT_MODEL_PATH not set, skipping meaning-preservation chrF check.")
         return None
@@ -275,9 +245,6 @@ def compute_meaning_preserved_chrf(hyps_raw, dataset, mt_model_path, target_colu
 
 
 def sample_for_human_panel(pred_str_raw, label_str_raw, dataset, sample_size, seed=42):
-    """Draw a random sample for the native-speaker intelligibility panel
-    (review: 50-100 utterances rated 1-5). Writes a CSV with an empty
-    rating column ready to hand to annotators."""
     n = len(pred_str_raw)
     sample_size = min(sample_size, n)
     rng = random.Random(seed)
@@ -294,15 +261,7 @@ def sample_for_human_panel(pred_str_raw, label_str_raw, dataset, sample_size, se
     panel_df.to_csv(HUMAN_PANEL_CSV, index=False)
     print(f"Saved {sample_size}-utterance human panel sample to {HUMAN_PANEL_CSV}")
 
-
-# ---------------------------------------------------------------------------
-# Metrics used during the per-checkpoint evaluate() loop
-# ---------------------------------------------------------------------------
-
 def bucket_wer_and_length_ratio(pred_str, label_str, ref_lengths, predicate):
-    """WER and mean hyp/ref length ratio restricted to utterances where
-    predicate(ref_length) is True. Used to flag decode truncation: WER
-    climbing while length_ratio drops in the long bucket."""
     idxs = [
         i for i, rl in enumerate(ref_lengths)
         if i < len(label_str) and label_str[i].strip() != "" and predicate(rl)
@@ -330,9 +289,6 @@ def compute_metrics(pred):
 
     degeneracy = degeneracy_stats(pred_str)
 
-    # Truncation-flagging columns (review: "reporting", item 4). pred_str /
-    # label_str here are in processed_dev row order (eval dataloader is
-    # sequential), matching the global ref_lengths / audio_durations index.
     wer_short_utt, _ = bucket_wer_and_length_ratio(pred_str, label_str, ref_lengths, lambda rl: 0 < rl <= 5)
     wer_long_utt, length_ratio_long_utt = bucket_wer_and_length_ratio(pred_str, label_str, ref_lengths, lambda rl: rl > 20)
 
@@ -394,13 +350,6 @@ def compute_metrics(pred):
         **degeneracy,
     }
 
-
-# ---------------------------------------------------------------------------
-# Model loading helper (shared by the eval loop, paired bootstrap, and the
-# final diagnostic report -- avoids re-implementing the merge+load logic
-# three times with three chances to drift out of sync)
-# ---------------------------------------------------------------------------
-
 def load_eval_model(ckpt_dir):
     base_model = WhisperForConditionalGeneration.from_pretrained(BASE_MODEL_PATH, torch_dtype=torch.float32)
     bambara_model = PeftModel.from_pretrained(base_model, BAMBARA_ADAPTER_PATH)
@@ -428,11 +377,6 @@ def run_predict(model, dataset):
     pred_str_norm = [normalize_text(p) for p in pred_str_raw]
     label_str_norm = [normalize_text(l) for l in label_str_raw]
     return pred_str_raw, label_str_raw, pred_str_norm, label_str_norm, trainer
-
-
-# ---------------------------------------------------------------------------
-# Per-checkpoint evaluation loop
-# ---------------------------------------------------------------------------
 
 checkpoint_dirs = sorted(
     glob.glob(os.path.join(CHECKPOINT_DIR, "checkpoint-*")),
@@ -516,12 +460,6 @@ for ckpt_dir in checkpoint_dirs:
     del eval_model, trainer, merged_model, bambara_model, base_model
     torch.cuda.empty_cache()
 
-# ---------------------------------------------------------------------------
-# Build the summary table FIRST -- everything below depends on it.
-# (This is the main fix: the paired-bootstrap and diagnostic sections used
-# to run before `df`/`best_row` existed, which crashed with NameError.)
-# ---------------------------------------------------------------------------
-
 df = pd.DataFrame(results).sort_values("clean_dev_wer").reset_index(drop=True)
 print("\n=== Summary (sorted by best clean WER) ===")
 print(df.to_string(index=False))
@@ -537,16 +475,10 @@ print(f"\nBest checkpoint by clean WER: {best_ckpt_name} "
       f"(WER={best_row['clean_dev_wer']:.2f}, CER={best_row['clean_dev_cer']:.2f})")
 print(f"Full path on volume: {best_ckpt_path}")
 
-# Get the best checkpoint's predictions once -- reused below for both the
-# paired bootstrap and the diagnostic report, instead of reloading twice.
 best_model, merged_model, bambara_model, base_model = load_eval_model(best_ckpt_path)
 best_pred_str_raw, best_label_str_raw, best_pred_str, best_label_str, best_trainer = run_predict(best_model, processed_dev)
 del best_model, best_trainer, merged_model, bambara_model, base_model
 torch.cuda.empty_cache()
-
-# ---------------------------------------------------------------------------
-# Paired bootstrap: best checkpoint vs runner-up
-# ---------------------------------------------------------------------------
 
 print("\n=== Paired bootstrap: best checkpoint vs runner-up ===")
 
@@ -559,9 +491,6 @@ if len(df) >= 2:
     del second_model, second_trainer, merged_model, bambara_model, base_model
     torch.cuda.empty_cache()
 
-    # Re-pair on non-empty references from the best checkpoint's decoding,
-    # relying on both predict() calls having iterated processed_dev in the
-    # same fixed order.
     paired_refs, paired_best_hyp, paired_second_hyp = [], [], []
     for r_best, p_best, p_second in zip(best_label_str, best_pred_str, second_pred_str):
         if r_best.strip() != "":
@@ -586,10 +515,6 @@ if len(df) >= 2:
 else:
     print("[INFO] Only 1 checkpoint, skipping paired bootstrap.")
 
-# ---------------------------------------------------------------------------
-# Detailed diagnostic report on the best checkpoint
-# ---------------------------------------------------------------------------
-
 print("\n=== Detailed diagnostic report on best checkpoint ===")
 
 pred_str, label_str = best_pred_str, best_label_str
@@ -597,9 +522,6 @@ pred_str, label_str = best_pred_str, best_label_str
 has_speaker_id = "client_id" in dataset_dev.column_names
 speaker_ids = dataset_dev["client_id"] if has_speaker_id else None
 
-# Koumankan4Dyula has no client_id (unlike the Common Voice test set), but it
-# does ship gender/age_group -- the closest available proxy for a
-# per-speaker-group robustness check on this split.
 has_gender = "gender" in dataset_dev.column_names
 genders = dataset_dev["gender"] if has_gender else None
 has_age_group = "age_group" in dataset_dev.column_names
@@ -659,7 +581,6 @@ else:
     print("\n[INFO] dataset_dev (Koumankan) has no client_id column -- "
           "per-speaker WER can only be computed if this is run on the Common Voice test set.")
 
-# Nearest available robustness cut on this dataset: gender / age_group.
 if has_gender:
     wer_by_gender = detail_df.groupby("gender")["utterance_wer"].agg(["mean", "count"])
     print("\nWER by gender:")
