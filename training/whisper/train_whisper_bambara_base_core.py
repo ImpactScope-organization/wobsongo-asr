@@ -111,7 +111,7 @@ base_model = WhisperForConditionalGeneration.from_pretrained(
 
 print("Attaching the Bambara adapter and merging it with the base model....")
 bambara_model = PeftModel.from_pretrained(base_model, BAMBARA_ADAPTER_PATH)
-merged_model = bambara_model.merge_and_unload()  # bobot Bambara "menyatu" ke base
+merged_model = bambara_model.merge_and_unload()
 
 merged_model.resize_token_embeddings(len(processor.tokenizer))
 merged_model.enable_input_require_grads()
