@@ -32,6 +32,8 @@ temp_chunks/
 *.wav
 *.mp3
 *.mp4
+*.txt
+
 
 # Logs
 *.log
