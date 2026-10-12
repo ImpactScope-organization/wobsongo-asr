@@ -261,6 +261,8 @@ class ASREndpoint:
                         for cp in chunks:
                             if os.path.exists(cp):
                                 os.remove(cp)
+                    if os.path.exists(tmp_audio.name):
+                        os.remove(tmp_audio.name)
 
                 t3 = time.perf_counter()
                 print(f"[EXEC PROFILING] Total Inference {len(candidate_langs)} Lang (Omni): {t3 - t2_chunking_done:.2f} s")

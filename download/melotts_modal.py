@@ -1,4 +1,5 @@
 import io
+import subprocess
 
 import modal
 
@@ -37,10 +38,29 @@ def _load_models(device: str):
     return {lang: TTS(language=lang, device=device) for lang in LANGUAGES}
 
 
+def _wav_to_ogg_opus(wav_bytes: bytes) -> bytes:
+    """Compress WAV to OGG/Opus, the voice-note format for Telegram and WhatsApp."""
+    proc = subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error",
+            "-i", "pipe:0",
+            "-c:a", "libopus", "-b:a", "32k", "-ar", "24000", "-ac", "1",
+            "-application", "voip",
+            "-f", "ogg", "pipe:1",
+        ],
+        input=wav_bytes,
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffmpeg failed: {proc.stderr.decode(errors='ignore')[:500]}")
+    return proc.stdout
+
+
 @app.function(volumes={CACHE_DIR: volume}, timeout=1800)
 def download_models():
     _load_models("cpu")
-    volume.commit() 
+    volume.commit()
     print("Model stored on Volume 'melotts-model'.")
 
 
@@ -48,7 +68,7 @@ def download_models():
     gpu="L4",
     volumes={CACHE_DIR: volume},
     scaledown_window=300,
-    timeout=600,
+    timeout=1800,
 )
 class MeloTTS:
     @modal.enter()
@@ -64,19 +84,26 @@ class MeloTTS:
         text = item.get("text")
         lang = item.get("language", "FR").upper()
         speed = float(item.get("speed", 1.0))
+        fmt = str(item.get("format", "wav")).lower()
         if not text:
-            raise HTTPException(400, "field 'text' is required")
+            raise HTTPException(400, "field 'text' wajib diisi")
         if lang not in self.models:
-            raise HTTPException(400, f"language must be one of {LANGUAGES}")
+            raise HTTPException(400, f"language harus salah satu dari {LANGUAGES}")
+        if fmt not in ("wav", "ogg"):
+            raise HTTPException(400, "format harus 'wav' atau 'ogg'")
 
         model = self.models[lang]
         speaker_ids = model.hps.data.spk2id
         key = item.get("speaker") or next(iter(speaker_ids.keys()))
         if key not in speaker_ids:
-            raise HTTPException(400, f"speaker not found. Options: {list(speaker_ids.keys())}")
+            raise HTTPException(400, f"speaker tidak ada. Pilihan: {list(speaker_ids.keys())}")
 
         audio = model.tts_to_file(text, speaker_ids[key], None, speed=speed, quiet=True)
 
         buf = io.BytesIO()
         sf.write(buf, audio, model.hps.data.sampling_rate, format="WAV")
-        return Response(content=buf.getvalue(), media_type="audio/wav")
+        wav_bytes = buf.getvalue()
+
+        if fmt == "ogg":
+            return Response(content=_wav_to_ogg_opus(wav_bytes), media_type="audio/ogg")
+        return Response(content=wav_bytes, media_type="audio/wav")
