@@ -7,6 +7,7 @@ from modules.transcriber import ModelType, TargetLanguage
 from modules.translation import LLMTranslator
 from modules.extractor import LLMExtractor
 from modules.comparator import LLMComparator
+from modules.modal_tts import ModalTTS, SPEAKERS
 
 # Module initialization
 @st.cache_resource
@@ -15,7 +16,9 @@ def load_modules():
         "transcriber": ModalTranscriber(),
         "translator": LLMTranslator(),
         "extractor": LLMExtractor(),
-        "comparator": LLMComparator()
+        "comparator": LLMComparator(),
+        "comparator": LLMComparator(),
+        "tts": ModalTTS()
     }
 
 modules = load_modules()
@@ -24,7 +27,7 @@ modules = load_modules()
 st.set_page_config(page_title="Wobsongo AI Pipeline", layout="wide")
 st.title("Wobsongo Audio AI Pipeline")
 
-tab1, tab2 = st.tabs(["Transcribe and Translate", "Translation Test"])
+tab1, tab2, tab3 = st.tabs(["Transcribe and Translate", "Translation Test", "TTS Test (MeloTTS)"])
 
 # TAB 1: Transcribe and Translate
 with tab1:
@@ -280,3 +283,77 @@ with tab2:
                 st.info(result.translated_text)
         else:
             st.warning("Please enter some text to translate first!")
+
+# TAB 3: TTS Test (MeloTTS)
+with tab3:
+    st.subheader("Isolated TTS Testing (MeloTTS)")
+    st.markdown("Use this section to test the MeloTTS model on Modal directly. The first request may take longer because of the container cold start.")
+
+    tts_text = st.text_area(
+        "Input Text to Speak:",
+        height=150,
+        placeholder="Enter French or English text here...",
+        key="tts_text_input"
+    )
+
+    col_tts1, col_tts2, col_tts3 = st.columns(3)
+
+    with col_tts1:
+        tts_language = st.selectbox(
+            "Language:",
+            options=["FR", "EN"],
+            help="Language of the input text. MeloTTS has a separate model per language.",
+            key="tts_language_select"
+        )
+
+    with col_tts2:
+        tts_speaker = st.selectbox(
+            "Speaker:",
+            options=SPEAKERS[tts_language],
+            key=f"tts_speaker_select_{tts_language}"
+        )
+
+    with col_tts3:
+        tts_speed = st.slider(
+            "Speed:",
+            min_value=0.5,
+            max_value=2.0,
+            value=1.0,
+            step=0.1,
+            key="tts_speed_slider"
+        )
+
+    if st.button("Generate Speech", type="primary", use_container_width=True, key="btn_tts"):
+        if tts_text.strip():
+            try:
+                with st.spinner("MeloTTS is generating the audio..."):
+                    tts_result = modules["tts"].synthesize(
+                        text=tts_text,
+                        language=tts_language,
+                        speaker=tts_speaker,
+                        speed=tts_speed
+                    )
+
+                st.success("Speech Generation Completed!")
+                st.audio(tts_result.audio_bytes, format="audio/wav")
+
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Request Time", f"{tts_result.request_seconds:.2f} s")
+                m2.metric("Audio Duration", f"{tts_result.audio_seconds:.2f} s")
+                m3.metric(
+                    "Real-Time Factor",
+                    f"{tts_result.request_seconds / tts_result.audio_seconds:.2f}",
+                    help="Request time divided by audio duration. Below 1 means faster than real-time. Includes network and cold start."
+                )
+
+                st.download_button(
+                    "Download WAV",
+                    data=tts_result.audio_bytes,
+                    file_name="melotts_output.wav",
+                    mime="audio/wav",
+                    key="btn_tts_download"
+                )
+            except Exception as e:
+                st.error(f"TTS failed: {e}")
+        else:
+            st.warning("Please enter some text first!")
