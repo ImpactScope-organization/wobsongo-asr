@@ -12,6 +12,7 @@ from modules.audio_utils import split_audio, get_audio_duration_ms, normalize_au
 image = (modal.Image.from_dockerfile("modal.Dockerfile")
          .apt_install("ffmpeg")
          .pip_install("transformers", "accelerate", "peft")
+         .pip_install("pyarrow==19.0.1")
          .add_local_python_source("modules")
 )
 
@@ -90,8 +91,8 @@ class ASREndpoint:
         
         import torch
         
-        if self.omni_pipeline is None:
-            print("[PROFILING] Loading Omnilingual ASR (Kept in memory)...")
+        if requested_model == "Omnilingual ASR" and self.omni_pipeline is None:
+            print("[PROFILING] Loading Omnilingual ASR (kept in memory)...")
             from omnilingual_asr.models.inference.pipeline import ASRInferencePipeline
             self.omni_pipeline = ASRInferencePipeline(model_card=DEFAULT_MODEL, device="cuda")
 
