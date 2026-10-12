@@ -34,6 +34,7 @@ HUMAN_PANEL_CSV = "/output/cv_reeval_human_panel_sample.csv"
 MT_MODEL_PATH = None
 MT_REFERENCE_COLUMN = "fr"
 HUMAN_PANEL_SAMPLE_SIZE = 75
+MIN_SPEAKER_UTTERANCES = 10
 
 processor = WhisperProcessor.from_pretrained(BASE_MODEL_PATH, language="french", task="transcribe")
 
@@ -60,18 +61,47 @@ def load_cv_split(tsv_name):
     df = df[df["sentence"].notna() & (df["sentence"].str.strip() != "")]
     df["audio"] = df["path"].apply(lambda p: f"{clips_dir}/{p}")
     df = df.rename(columns={"sentence": "dyu", "age": "age_group"})
-    
-    keep_cols = ["audio", "dyu"]
-    for col in ["client_id", "gender", "age_group"]:
+
+    keep_cols = ["path", "audio", "dyu"]
+    optional_str_cols = ["client_id", "gender", "age_group"]
+    for col in optional_str_cols:
         if col in df.columns:
             keep_cols.append(col)
-            
+
     df = df[keep_cols].reset_index(drop=True)
-    ds = Dataset.from_pandas(df, preserve_index=False)
+    for col in optional_str_cols:
+        if col in df.columns:
+            df[col] = df[col].fillna("").astype(str)
+
+    return df
+
+
+def load_cv_combined(tsv_names=("train.tsv", "dev.tsv", "test.tsv")):
+    frames = []
+    for tsv_name in tsv_names:
+        tsv_path = f"{CV_DIOULA_PATH}/{tsv_name}"
+        if not os.path.exists(tsv_path):
+            print(f"[WARN] {tsv_path} not found, skipping this split.")
+            continue
+        frames.append(load_cv_split(tsv_name))
+
+    if not frames:
+        raise FileNotFoundError(f"No CV splits found among {tsv_names} in {CV_DIOULA_PATH}")
+
+    combined = pd.concat(frames, ignore_index=True)
+    before = len(combined)
+    combined = combined.drop_duplicates(subset="path", keep="first").reset_index(drop=True)
+    after = len(combined)
+    if before != after:
+        print(f"[INFO] Dropped {before - after} duplicate clips found across splits.")
+
+    combined = combined.drop(columns=["path"])
+    data_dict = {col: combined[col].tolist() for col in combined.columns}
+    ds = Dataset.from_dict(data_dict)
     return ds
 
-print(f"Loading Common Voice test set from {CV_DIOULA_PATH} ...")
-dataset_test = load_cv_split("test.tsv")
+print(f"Loading Common Voice (train+dev+test, combined) from {CV_DIOULA_PATH} ...")
+dataset_test = load_cv_combined(("train.tsv", "dev.tsv", "test.tsv", "validated.tsv"))
 dataset_test = dataset_test.filter(has_valid_dyu_text, num_proc=4)
 dataset_test = dataset_test.cast_column("audio", Audio(sampling_rate=16000))
 processed_test = dataset_test.map(prepare_dataset, remove_columns=dataset_test.column_names, num_proc=4)
@@ -79,6 +109,10 @@ print(f"Test set (CV): {len(processed_test)} rows")
 
 ref_lengths = [len(get_target_text(ex).split()) for ex in dataset_test]
 audio_durations = [len(a["array"]) / a["sampling_rate"] for a in dataset_test["audio"]]
+
+print(f"[SANITY CHECK] CV test set: {len(dataset_test)} utterances, "
+      f"{sum(ref_lengths)} total reference words, "
+      f"{sum(audio_durations) / 3600:.2f} total hours of audio")
 
 @dataclass
 class CleanWhisperDataCollator:
@@ -149,7 +183,7 @@ def degeneracy_stats(pred_str):
         "pct_repeated_ngram": 100 * repeated / n,
     }
 
-def bootstrap_wer_ci(refs, hyps, n_resamples=500, ci=0.95, seed=42):
+def bootstrap_wer_ci(refs, hyps, n_resamples=2000, ci=0.95, seed=42):
     n = len(refs)
     if n == 0: return {"wer_ci_low": float("nan"), "wer_ci_high": float("nan")}
     rng = random.Random(seed)
@@ -164,7 +198,7 @@ def bootstrap_wer_ci(refs, hyps, n_resamples=500, ci=0.95, seed=42):
     hi = int((1 + ci) / 2 * n_resamples) - 1
     return {"wer_ci_low": resampled_wers[lo], "wer_ci_high": resampled_wers[hi]}
 
-def bootstrap_cer_ci(refs, hyps, n_resamples=500, ci=0.95, seed=42):
+def bootstrap_cer_ci(refs, hyps, n_resamples=2000, ci=0.95, seed=42):
     n = len(refs)
     if n == 0: return {"cer_ci_low": float("nan"), "cer_ci_high": float("nan")}
     rng = random.Random(seed)
@@ -179,7 +213,7 @@ def bootstrap_cer_ci(refs, hyps, n_resamples=500, ci=0.95, seed=42):
     hi = int((1 + ci) / 2 * n_resamples) - 1
     return {"cer_ci_low": resampled_cers[lo], "cer_ci_high": resampled_cers[hi]}
 
-def paired_bootstrap_wer_diff(refs, hyps_a, hyps_b, n_resamples=500, ci=0.95, seed=42):
+def paired_bootstrap_wer_diff(refs, hyps_a, hyps_b, n_resamples=2000, ci=0.95, seed=42):
     n = len(refs)
     rng = random.Random(seed)
     diffs = []
@@ -198,8 +232,18 @@ def paired_bootstrap_wer_diff(refs, hyps_a, hyps_b, n_resamples=500, ci=0.95, se
         "mean_diff": sum(diffs) / len(diffs),
         "diff_ci_low": diffs[lo],
         "diff_ci_high": diffs[hi],
-        "significant": diffs[lo] > 0 or diffs[hi] < 0, 
+        "significant": diffs[lo] > 0 or diffs[hi] < 0,
     }
+
+def paired_bootstrap_by_checkpoint(df, results_by_step, refs_by_step, hyps_by_step, step_a, step_b):
+    if step_a not in refs_by_step or step_b not in refs_by_step:
+        print(f"[WARN] Cannot run paired bootstrap {step_a} vs {step_b}: "
+              f"one or both checkpoints were not evaluated in this run.")
+        return None
+    refs = refs_by_step[step_a]
+    hyps_a = hyps_by_step[step_a]
+    hyps_b = hyps_by_step[step_b]
+    return paired_bootstrap_wer_diff(refs, hyps_a, hyps_b)
 
 def top_substitution_pairs(refs, hyps, top_k=15):
     counter = Counter()
@@ -245,6 +289,26 @@ def bucket_wer_and_length_ratio(pred_str, label_str, ref_lengths, predicate):
     ratios = [len(pred_str[i].split()) / ref_lengths[i] for i in idxs if ref_lengths[i] > 0]
     length_ratio = statistics.mean(ratios) if ratios else float("nan")
     return bucket_wer, length_ratio
+
+def compute_bucket_stats(pred_str, label_str, ref_lengths, per_utt_wer, bucket_labels):
+    rows = {}
+    categories = bucket_labels.cat.categories if hasattr(bucket_labels, "cat") else sorted(set(bucket_labels))
+    for bucket_name in categories:
+        idxs = [i for i, b in enumerate(bucket_labels) if b == bucket_name]
+        if not idxs:
+            continue
+        bucket_preds = [pred_str[i] for i in idxs]
+        bucket_labels_ = [label_str[i] for i in idxs]
+        corpus_wer = 100 * metric_wer.compute(predictions=bucket_preds, references=bucket_labels_)
+        bucket_per_utt = [per_utt_wer[i] for i in idxs]
+        rows[bucket_name] = {
+            "n_utterances": len(idxs),
+            "total_ref_words": sum(ref_lengths[i] for i in idxs),
+            "corpus_wer": corpus_wer,
+            "mean_utterance_wer": statistics.mean(bucket_per_utt),
+            "median_utterance_wer": statistics.median(bucket_per_utt),
+        }
+    return pd.DataFrame.from_dict(rows, orient="index")
 
 def compute_metrics(pred):
     pred_ids = pred.predictions
@@ -327,6 +391,8 @@ def load_eval_model(ckpt_dir):
     eval_model = PeftModel.from_pretrained(merged_model, ckpt_dir)
     eval_model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language="french", task="transcribe")
     eval_model.generation_config.forced_decoder_ids = processor.get_decoder_prompt_ids(language="french", task="transcribe")
+    print(f"[DECODER PROMPT CHECK] {os.path.basename(ckpt_dir)}: "
+          f"forced_decoder_ids={eval_model.generation_config.forced_decoder_ids}")
     return eval_model, merged_model, bambara_model, base_model
 
 def run_predict(model, dataset):
@@ -382,6 +448,8 @@ except Exception as e:
     WANDB_ENABLED = False
 
 results = []
+refs_by_step = {}
+hyps_by_step = {}
 
 for ckpt_dir in checkpoint_dirs:
     ckpt_name = os.path.basename(ckpt_dir)
@@ -412,7 +480,8 @@ for ckpt_dir in checkpoint_dirs:
         row[f"cv_test_{key}"] = metrics.get(f"cv_test_{key}")
 
     print(f"{ckpt_name}: wer={row['cv_test_wer']:.2f}  cer={row['cv_test_cer']:.2f}  "
-          f"ci=[{row['cv_test_wer_ci_low']:.2f}, {row['cv_test_wer_ci_high']:.2f}]")
+          f"ci=[{row['cv_test_wer_ci_low']:.2f}, {row['cv_test_wer_ci_high']:.2f}]  "
+          f"n_utterances={len(processed_test)}  total_ref_words={sum(ref_lengths)}")
 
     if WANDB_ENABLED:
         try:
@@ -421,6 +490,10 @@ for ckpt_dir in checkpoint_dirs:
             print(f"[WARN] wandb.log failed for {ckpt_name} ({e})")
 
     results.append(row)
+    _, _, ckpt_pred_str, ckpt_label_str, _ = run_predict(eval_model, processed_test)
+    ckpt_pairs = [(r, p) for r, p in zip(ckpt_label_str, ckpt_pred_str) if r.strip() != ""]
+    refs_by_step[step] = [r for r, p in ckpt_pairs]
+    hyps_by_step[step] = [p for r, p in ckpt_pairs]
 
     del eval_model, trainer, merged_model, bambara_model, base_model
     torch.cuda.empty_cache()
@@ -435,6 +508,7 @@ print(f"\nSaved results to {RESULTS_CSV}")
 
 best_row = df.iloc[0]
 best_ckpt_name = best_row["checkpoint"]
+best_step = int(best_row["step"])
 best_ckpt_path = os.path.join(CHECKPOINT_DIR, best_ckpt_name)
 print(f"\nBest checkpoint by CV WER: {best_ckpt_name} (WER={best_row['cv_test_wer']:.2f})")
 
@@ -444,6 +518,10 @@ del best_model, best_trainer, merged_model, bambara_model, base_model
 torch.cuda.empty_cache()
 
 print("\n=== Paired bootstrap: best checkpoint vs runner-up ===")
+print("[NOTE] This compares whichever two checkpoints ranked #1 and #2 by WER, "
+      "which may be the two closest-performing checkpoints -- the comparison "
+      "LEAST likely to reach significance. See the targeted step-vs-step "
+      "comparison further below for a more informative test.")
 
 if len(df) >= 2:
     second_row = df.iloc[1]
@@ -469,6 +547,16 @@ if len(df) >= 2:
 else:
     print("[INFO] Only 1 checkpoint, skipping paired bootstrap.")
 
+print("\n=== Paired bootstrap: checkpoint-40 vs checkpoint-400 (targeted) ===")
+targeted_result = paired_bootstrap_by_checkpoint(
+    df, results, refs_by_step, hyps_by_step, step_a=40, step_b=400
+)
+if targeted_result is not None:
+    print(f"WER diff (checkpoint-40 - checkpoint-400): "
+          f"mean={targeted_result['mean_diff']:.2f}, "
+          f"95% CI=[{targeted_result['diff_ci_low']:.2f}, {targeted_result['diff_ci_high']:.2f}], "
+          f"significant={targeted_result['significant']}")
+
 print("\n=== Detailed diagnostic report on best checkpoint ===")
 
 pred_str, label_str = best_pred_str, best_label_str
@@ -480,14 +568,15 @@ has_gender = "gender" in dataset_test.column_names
 genders = dataset_test["gender"] if has_gender else None
 has_age_group = "age_group" in dataset_test.column_names
 age_groups = dataset_test["age_group"] if has_age_group else None
-
 detail_rows = []
 for i, (p, r) in enumerate(zip(pred_str, label_str)):
-    if r.strip() == "": continue
+    if r.strip() == "":
+        continue
     wer_u = 100 * jiwer.wer(r, p)
     hyp_len = len(p.split())
     ref_len = ref_lengths[i]
     detail_rows.append({
+        "original_index": i,
         "ref_length_words": ref_len,
         "hyp_length_words": hyp_len,
         "length_ratio": hyp_len / ref_len if ref_len > 0 else float("nan"),
@@ -501,25 +590,58 @@ for i, (p, r) in enumerate(zip(pred_str, label_str)):
 detail_df = pd.DataFrame(detail_rows)
 
 if has_speaker_id:
-    wer_by_speaker = detail_df.groupby("speaker_id")["utterance_wer"].agg(["mean", "count"]).sort_values(by="mean", ascending=False)
-    print("\nPer-speaker WER (Top 10 worst):")
-    print(wer_by_speaker.head(10).to_string())
+    wer_by_speaker = (
+        detail_df.groupby("speaker_id")["utterance_wer"]
+        .agg(["mean", "median", "count"])
+        .rename(columns={"mean": "mean_wer", "median": "median_wer", "count": "n_utterances"})
+    )
+    reliable_speakers = wer_by_speaker[wer_by_speaker["n_utterances"] >= MIN_SPEAKER_UTTERANCES]
+    print(f"\nPer-speaker WER (n >= {MIN_SPEAKER_UTTERANCES} utterances, full spread, "
+          f"{len(reliable_speakers)} of {len(wer_by_speaker)} speakers qualify):")
+    print(reliable_speakers.sort_values(by="mean_wer", ascending=False).to_string())
+    if len(wer_by_speaker) > len(reliable_speakers):
+        print(f"[INFO] {len(wer_by_speaker) - len(reliable_speakers)} speakers excluded "
+              f"for having fewer than {MIN_SPEAKER_UTTERANCES} utterances.")
+
+aligned_pred_str = [pred_str[i] for i in detail_df["original_index"]]
+aligned_label_str = [label_str[i] for i in detail_df["original_index"]]
+aligned_ref_lengths = [ref_lengths[i] for i in detail_df["original_index"]]
+aligned_per_utt_wer = detail_df["utterance_wer"].tolist()
 
 detail_df["duration_bucket"] = pd.cut(
     detail_df["audio_duration_sec"], bins=[0, 3, 6, 10, 1000],
     labels=["0-3s", "3-6s", "6-10s", "10s+"]
 )
-by_duration = detail_df.groupby("duration_bucket", observed=True).agg(
-    mean_wer=("utterance_wer", "mean"),
-    mean_length_ratio=("length_ratio", "mean"),
-    n_utterances=("utterance_wer", "count"),
+by_duration = compute_bucket_stats(
+    aligned_pred_str, aligned_label_str, aligned_ref_lengths, aligned_per_utt_wer,
+    detail_df["duration_bucket"],
 )
-print("\nWER by audio duration on Common Voice:")
+print("\nWER by audio duration on Common Voice "
+      "(corpus_wer is comparable to the headline WER above; "
+      "mean/median_utterance_wer show per-utterance spread):")
 print(by_duration.to_string())
+
+detail_df["length_bucket"] = pd.cut(
+    detail_df["ref_length_words"], bins=[0, 5, 10, 20, 1000],
+    labels=["1-5 words", "6-10 words", "11-20 words", "20+ words"]
+)
+by_length = compute_bucket_stats(
+    aligned_pred_str, aligned_label_str, aligned_ref_lengths, aligned_per_utt_wer,
+    detail_df["length_bucket"],
+)
+print("\nWER by reference length on Common Voice:")
+print(by_length.to_string())
 
 os.makedirs(os.path.dirname(DETAIL_CSV), exist_ok=True)
 detail_df.to_csv(DETAIL_CSV, index=False)
 print(f"\nSaved per-utterance detail to {DETAIL_CSV}")
+non_empty_pairs = [(r, p) for p, r in zip(pred_str, label_str) if r.strip() != ""]
+top_subs = top_substitution_pairs(
+    [r for r, p in non_empty_pairs], [p for r, p in non_empty_pairs]
+)
+print("\nTop substitution pairs (ref -> hyp):")
+for (ref_w, hyp_w), count in top_subs:
+    print(f"  {count:>3}x  '{ref_w}' -> '{hyp_w}'")
 
 sample_for_human_panel(best_pred_str_raw, best_label_str_raw, dataset_test, HUMAN_PANEL_SAMPLE_SIZE)
 
@@ -535,6 +657,8 @@ if WANDB_ENABLED:
         wandb.summary["best_cv_test_pct_french_leak"] = best_row["cv_test_pct_french_leak"]
         wandb.summary["best_cv_test_cer_orthographic_gap"] = best_row["cv_test_cer_orthographic_gap"]
         wandb.summary["best_cv_test_median_utterance_wer"] = best_row["cv_test_median_utterance_wer"]
+        wandb.summary["cv_test_n_utterances"] = len(processed_test)
+        wandb.summary["cv_test_total_ref_words"] = sum(ref_lengths)
         wandb.finish()
     except Exception as e:
         print(f"[WARN] wandb summary/finish failed ({e})")

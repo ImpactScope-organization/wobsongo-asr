@@ -78,7 +78,7 @@ def koumankan():
     CLI command to re-evaluate on Koumankan dev set.
     Usage: modal run reeval_launcher.py::koumankan
     """
-    print("[INFO] Menjalankan re-evaluasi untuk dataset Koumankan...")
+    print("Running re-evaluation for the Koumankan dataset...")
     reeval_koumankan_checkpoints.remote()
 
 
@@ -88,5 +88,5 @@ def commonvoice():
     CLI command to re-evaluate on Common Voice test set.
     Usage: modal run reeval_launcher.py::commonvoice
     """
-    print("[INFO] Menjalankan re-evaluasi untuk dataset Common Voice...")
+    print("Running re-evaluation for the Common Voice dataset...")
     reeval_cv_checkpoints.remote()
