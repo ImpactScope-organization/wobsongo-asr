@@ -284,7 +284,7 @@ with tab2:
         else:
             st.warning("Please enter some text to translate first!")
 
-# TAB 3: TTS Test (MeloTTS)
+# TAB 3 : TTS Test (MeloTTS)
 with tab3:
     st.subheader("Isolated TTS Testing (MeloTTS)")
     st.markdown("Use this section to test the MeloTTS model on Modal directly. The first request may take longer because of the container cold start.")
